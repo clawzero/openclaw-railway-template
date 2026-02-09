@@ -1,0 +1,15 @@
+# Add to existing Dockerfile after FROM openclaw:
+FROM openclaw:${OPENCLAW_VERSION:-latest} AS openclaw-base
+
+# Install Doppler CLI to persistent volume
+RUN curl -Ls https://cli.doppler.com/download | sh && \
+    mv /root/.local/share/doppler /data/.doppler 2>/dev/null || true
+
+# Create symlinks for persistent directories
+RUN mkdir -p /data/.openclaw && \
+    ln -sf /data/.openclaw/skills /root/.openclaw/skills || true
+
+# Pre-install ClawHub CLI for skill management
+RUN npm install -g @voltagent/clawhub
+
+# Rest of original Dockerfile...

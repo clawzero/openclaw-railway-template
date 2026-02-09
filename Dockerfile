@@ -42,10 +42,12 @@ RUN pnpm ui:install && pnpm ui:build
 FROM node:22-bookworm
 ENV NODE_ENV=production
 
+# Install common tools (persisted in image)
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    wget \
     build-essential \
     gcc \
     g++ \
@@ -56,7 +58,12 @@ RUN apt-get update \
     python3 \
     pkg-config \
     sudo \
+    gnupg \
+    lsb-release \
   && rm -rf /var/lib/apt/lists/*
+
+# Install Doppler CLI (persisted in image)
+RUN curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
 
 # Install Homebrew (must run as non-root user)
 # Create a user for Homebrew installation, install it, then make it accessible to all users
@@ -85,6 +92,12 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
   && chmod +x /usr/local/bin/openclaw
 
 COPY src ./src
+
+# Environment variables that should be set in Railway dashboard:
+# - DOPPLER_TOKEN (for Doppler CLI authentication)
+# - NATIONAL_RAIL_TOKEN (for UK Train API)
+# - HYPERLIQUID_ADDRESS (optional)
+# - HYPERLIQUID_PRIVATE_KEY (optional)
 
 ENV PORT=8080
 EXPOSE 8080

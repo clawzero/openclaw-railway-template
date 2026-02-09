@@ -82,3 +82,30 @@ docker run --rm -p 8080:8080 \
 
 # open http://localhost:8080/setup (password: test)
 ```
+
+## Persistent Skills & Tools
+
+This template persists skills and tools across restarts using the `/data` volume.
+
+### Skills Persistence
+
+Skills are stored in the persistent volume at `/data/.openclaw/skills` and symlinked to `~/.openclaw/skills`.
+
+**Installing skills:**
+```bash
+# Install via ClawHub
+npx clawhub@latest install <skill-slug>
+
+# Or manually copy to /data/.openclaw/skills/
+```
+
+### Tools Persistence
+
+Doppler CLI and other tools are installed to the persistent volume.
+
+### First Setup
+
+Run the persistent setup script:
+```bash
+./persistent-setup.sh
+```

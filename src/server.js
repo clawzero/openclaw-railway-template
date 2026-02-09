@@ -16,6 +16,8 @@ const STATE_DIR =
 const WORKSPACE_DIR =
   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
   path.join(STATE_DIR, "workspace");
+const SKILLS_DIR = path.join(STATE_DIR, "skills");
+const TOOLS_DIR = path.join(STATE_DIR, "tools");
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
@@ -25,6 +27,71 @@ const DEBUG = process.env.OPENCLAW_TEMPLATE_DEBUG?.toLowerCase() === "true";
 function debug(...args) {
   if (DEBUG) console.log(...args);
 }
+
+// Initialize persistent directories and symlinks for skills/tools
+function initializePersistentPaths() {
+  console.log(`[persistent] Initializing persistent paths...`);
+  
+  const persistentPaths = [
+    { dir: STATE_DIR, desc: "state" },
+    { dir: WORKSPACE_DIR, desc: "workspace" },
+    { dir: SKILLS_DIR, desc: "skills" },
+    { dir: TOOLS_DIR, desc: "tools" },
+  ];
+
+  for (const { dir, desc } of persistentPaths) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`[persistent] Created: ${dir}`);
+    } catch (err) {
+      console.warn(`[persistent] Could not create ${desc} dir ${dir}: ${err.message}`);
+    }
+  }
+
+  // Symlink ~/.openclaw/skills to persistent SKILLS_DIR
+  const homeOpenClaw = path.join(os.homedir(), ".openclaw");
+  const homeSkills = path.join(homeOpenClaw, "skills");
+  
+  try {
+    fs.mkdirSync(homeOpenClaw, { recursive: true });
+    
+    // Remove existing skills if it's a directory (not a symlink)
+    try {
+      const existingStat = fs.lstatSync(homeSkills);
+      if (existingStat.isDirectory() && !existingStat.isSymbolicLink()) {
+        fs.rmSync(homeSkills, { recursive: true });
+        console.log(`[persistent] Removed existing skills dir to replace with symlink`);
+      }
+    } catch {
+      // Doesn't exist or is already a symlink
+    }
+    
+    // Create symlink
+    if (!fs.existsSync(homeSkills)) {
+      fs.symlinkSync(SKILLS_DIR, homeSkills);
+      console.log(`[persistent] Symlinked: ${homeSkills} -> ${SKILLS_DIR}`);
+    }
+    
+    // Symlink ~/.local/share/doppler to persistent TOOLS_DIR/doppler
+    const homeDoppler = path.join(os.homedir(), ".local", "share", "doppler");
+    const persistentDoppler = path.join(TOOLS_DIR, "doppler");
+    
+    fs.mkdirSync(path.dirname(homeDoppler), { recursive: true });
+    fs.mkdirSync(persistentDoppler, { recursive: true });
+    
+    if (!fs.existsSync(homeDoppler)) {
+      fs.symlinkSync(persistentDoppler, homeDoppler);
+      console.log(`[persistent] Symlinked: ${homeDoppler} -> ${persistentDoppler}`);
+    }
+    
+    console.log(`[persistent] ✓ Persistent paths initialized`);
+  } catch (err) {
+    console.warn(`[persistent] Could not create symlinks: ${err.message}`);
+  }
+}
+
+// Initialize persistent paths before resolving token
+initializePersistentPaths();
 
 // Gateway admin token (protects Openclaw gateway + Control UI).
 // Must be stable across restarts. If not provided via env, persist it in the state dir.
