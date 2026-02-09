@@ -1,209 +1,199 @@
 # Yellow Deployment on Railway - Best Practices
 
-## Problem Statement
+## The Right Way: Doppler → Railway Sync
 
-Yellow runs on Railway with ephemeral containers. When the container restarts:
-- Doppler CLI disappears
-- Installed tools get lost
-- Skills need reinstallation
-- Environment variables reset
+**Only ONE environment variable needed in Railway: `DOPPLER_TOKEN`**
 
-## Solutions
+All other secrets sync automatically from Doppler!
 
-### 1. Bake Tools into Dockerfile
+## How It Works
 
-Add tools during build so they're always available:
+```
+Doppler (secrets) ←→ Railway (environment variables)
+     ↓
+   Doppler CLI authenticates with DOPPLER_TOKEN
+     ↓
+   All other secrets sync automatically
+```
+
+## Setup (One-Time)
+
+### 1. Connect Doppler to Railway
+
+**In Doppler Dashboard:**
+1. Go to your project → Integrations → Railway
+2. Add Railway API Token (get from railway.app/account/tokens)
+3. Select your Yellow Railway project
+4. Select `dev_yellow` config to sync
+5. Enable "Redeploy on secret change"
+
+### 2. Set ONE env var in Railway Dashboard
+
+```
+DOPPLER_TOKEN=dp.st.your_doppler_service_token
+```
+
+**That's it!** All other secrets sync automatically from Doppler.
+
+## Secrets That Sync
+
+From `yellow-claw` project / `dev_yellow` config:
+
+```
+GITHUB_TOKEN
+ANTHROPIC_SETUP_TOKEN
+TELEGRAM_BOT_TOKEN
+NATIONAL_RAIL_TOKEN
+HYPERLIQUID_ADDRESS
+HYPERLIQUID_PRIVATE_KEY
+MATON_API_KEY
+```
+
+## Tools Persistence
+
+### Doppler CLI
+
+**Baked into Dockerfile** so it's always available:
 
 ```dockerfile
-# In Dockerfile, add after FROM node:
-RUN apt-get install -y curl wget git
-
-# Install Doppler CLI
+# Runtime image
 RUN curl -Ls https://cli.doppler.com/install.sh | sh
 ```
 
-### 2. Use Doppler for Secrets
-
-All secrets stored in Doppler:
-```
-yellow-claw project / dev_yellow config
-```
-
-Access via:
-```bash
-doppler secrets get SECRET_NAME --project yellow-claw --config dev_yellow --raw
-```
-
-### 3. Symlink to Persistent Volume
-
-The `/data` directory persists. Symlink tools there:
+**Authenticate with:**
 
 ```bash
-# In server.js or setup script:
-mkdir -p /data/.doppler
-mkdir -p /data/.npm
-mkdir -p /data/.openclaw/skills
-
-ln -sf /data/.doppler ~/.doppler
-ln -sf /data/.npm ~/.npm
-ln -sf /data/.openclaw/skills ~/.openclaw/skills
+export DOPPLER_TOKEN=dp.st.your_token
+doppler login --token $DOPPLER_TOKEN
 ```
 
-### 4. Set Environment Variables in Railway Dashboard
+### Other Tools
 
-Never rely on container startup. Set in Railway:
-```
-NATIONAL_RAIL_TOKEN=...
-HYPERLIQUID_ADDRESS=...
-HYPERLIQUID_PRIVATE_KEY=...
-```
+**Also baked into Dockerfile:**
 
-### 5. Skills Installation
-
-Skills should be:
-- Installed to `/data/.openclaw/skills` (persistent)
-- OR baked into Dockerfile
-- Documented in `yellow/SKILL.md`
-
-## Yellow Branch Structure
-
-```
-develop-yellow/
-├── Dockerfile          # Includes tools (Doppler, etc.)
-├── server.js          # Symlinks to /data for persistence
-├── railway.toml        # Volume mount: /data
-└── skills/            # Pre-installed skills (optional)
-```
-
-## Deployment Checklist
-
-### 1. Add Tools to Dockerfile
 ```dockerfile
-RUN apt-get update && apt-get install -y \
+RUN apt-get install -y \
     curl \
     wget \
     git \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-### 2. Set Environment Variables in Railway Dashboard
-```
-DOPPLER_TOKEN=dp.st.your_token
-NATIONAL_RAIL_TOKEN=...
-HYPERLIQUID_ADDRESS=...
-HYPERLIQUID_PRIVATE_KEY=...
-```
-
-### 3. Configure Volume Mount
-In `railway.toml`:
-```toml
-[mounts]
-  source = "openclaw-data"
-  target = "/data"
-```
-
-### 4. Update server.js for Symlinks
-Add before gateway starts:
-```javascript
-// Create symlinks to persistent volume
-const paths = [
-  { from: '/data/.doppler', to: '/root/.doppler' },
-  { from: '/data/.npm', to: '/root/.npm' },
-  { from: '/data/.openclaw/skills', to: '/root/.openclaw/skills' }
-];
-```
-
-## Environment Variables to Set in Railway
-
-Required:
-```
-DOPPLER_TOKEN=dp.st....        # For Doppler CLI access
-NATIONAL_RAIL_TOKEN=...        # UK Train API
-```
-
-Optional (for Hyperliquid):
-```
-HYPERLIQUID_ADDRESS=0x...
-HYPERLIQUID_PRIVATE_KEY=0x...
+    gnupg \
+    lsb-release
 ```
 
 ## Skills Persistence
 
-### Option A: Install to /data (Recommended)
-```bash
-# Install skill
-npx clawhub install skill-name
+Skills are installed to `/data/.openclaw/skills` (persistent volume).
 
-# Copy to persistent volume
+### Install a Skill
+
+```bash
+npx clawhub install skill-name
 cp -r /data/workspace/skills/skill-name /data/.openclaw/skills/
 ```
 
-### Option B: Bake into Dockerfile
-```dockerfile
-RUN npx clawhub install skill-name && \
-    cp -r skills/skill-name /data/.openclaw/skills/
-```
+### Available Skills
+
+See Yellow's skill documentation:
+https://github.com/clawzero/claw-skills/tree/main/yellow
+
+## deploy-yellow Branch
+
+**Branch:** `develop-yellow`
+
+**What it includes:**
+- Dockerfile with Doppler CLI + tools baked in
+- Railway.toml with volume mount
+- Best practices documentation
 
 ## Workflow
 
-### 1. Develop locally
+### 1. Add a new secret
+
 ```bash
-# Test skills
+# In Doppler dashboard:
+# yellow-claw project → dev_yellow config → Add SECRET
+
+# Or via CLI:
+doppler secrets set NEW_SECRET=value --project yellow-claw --config dev_yellow
+```
+
+Doppler syncs to Railway → Service redeploys automatically ✓
+
+### 2. Add a new skill
+
+```bash
+# Install
 npx clawhub install skill-name
-./skill-name/scripts/run.sh
+
+# Make persistent
+cp -r /data/workspace/skills/skill-name /data/.openclaw/skills/
+
+# Document
+# Update yellow/SKILL.md in claw-skills repo
 ```
 
-### 2. Commit to develop-yellow
+### 3. Add a new tool
+
 ```bash
-git add .
-git commit -m "feat: Add new skill"
-git push origin develop-yellow
+# In develop-yellow branch → Update Dockerfile
+# Commit → Push → Railway redeploys automatically
 ```
 
-### 3. Deploy from Railway
-- Connect `develop-yellow` branch in Railway
-- Set environment variables in Railway dashboard
-- Deploy
+## Environment Variables
 
-### 4. Verify
-```bash
-# SSH into Railway container
-# Check tools exist
-which doppler
-doppler --version
+### In Doppler (auto-syncs to Railway)
 
-# Check skills
-ls /data/.openclaw/skills/
-```
+| Secret | Purpose |
+|--------|---------|
+| GITHUB_TOKEN | GitHub API |
+| ANTHROPIC_SETUP_TOKEN | Claude models |
+| TELEGRAM_BOT_TOKEN | Telegram bot |
+| NATIONAL_RAIL_TOKEN | UK Trains API |
+| HYPERLIQUID_ADDRESS | Hyperliquid (read-only) |
+| HYPERLIQUID_PRIVATE_KEY | Hyperliquid (trading) |
+| MATON_API_KEY | Gmail API |
+
+### In Dockerfile (baked into image)
+
+| Tool | Purpose |
+|------|---------|
+| Doppler CLI | Secrets management |
+| curl | HTTP requests |
+| wget | Downloads |
+| git | Version control |
+| gnupg | GPG signing |
+| lsb-release | System info |
 
 ## Troubleshooting
 
-### "Doppler not found"
-→ Set `DOPPLER_TOKEN` in Railway dashboard
+### "Doppler not authenticated"
+→ Check `DOPPLER_TOKEN` is set in Railway
+
+### "Secret not found"
+→ Verify secret exists in Doppler dashboard
+→ Check correct project/config: `yellow-claw` / `dev_yellow`
 
 ### "Skill not loading"
 → Check skill is in `/data/.openclaw/skills/`
-
-### "Environment variable not set"
-→ Set in Railway dashboard, not in container
+→ Restart gateway if needed
 
 ### "Permission denied"
-→ Check SSH keys in Doppler are valid
+→ Check GitHub token has correct scopes
+→ Verify SSH keys in Doppler
 
-## Maintenance
+## Quick Reference
 
-### Weekly
-- [ ] Review Doppler tokens
-- [ ] Check skill versions
-- [ ] Verify environment variables
-
-### Monthly
-- [ ] Update tools in Dockerfile
-- [ ] Review security (rotate tokens)
-- [ ] Backup configurations
+| What | Where |
+|------|-------|
+| Secrets | Doppler (auto-syncs) |
+| Doppler CLI | Dockerfile (baked) |
+| Tools | Dockerfile (baked) |
+| Skills | `/data/.openclaw/skills/` |
+| Env vars in Railway | `DOPPLER_TOKEN` only |
 
 ## References
 
-- Railway Docs: https://railway.app/docs
-- Doppler CLI: https://docs.doppler.com/docs/cli
+- Doppler Railway Integration: https://docs.doppler.com/docs/railway
+- Doppler Dockerfile: https://docs.doppler.com/docs/dockerfile
+- Yellow Skills: https://github.com/clawzero/claw-skills/tree/main/yellow
 - OpenClaw Skills: https://github.com/openclaw/skills
