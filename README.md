@@ -109,3 +109,33 @@ Run the persistent setup script:
 ```bash
 ./persistent-setup.sh
 ```
+
+---
+
+## ⚠️ Security Notice
+
+**This is a public repository. Do NOT commit:**
+
+- API tokens
+- API keys
+- Passwords
+- Private keys
+- Service tokens
+
+All secrets must be stored in Doppler and synced to Railway.
+
+**When adding features:**
+
+1. ✅ Use placeholders: `\$DOPPLER_TOKEN`, `\$SECRET_NAME`
+2. ✅ Document required secrets in Doppler
+3. ❌ Never commit real values
+4. ✅ Use environment variables, not hardcoded secrets
+
+## Doppler Integration
+
+All secrets are managed in Doppler:
+- **Project:** yellow-claw
+- **Config:** dev_yellow
+- **Sync:** Doppler → Railway (automatic)
+
+See [YELLOW_DEPLOYMENT.md](YELLOW_DEPLOYMENT.md) for details.
