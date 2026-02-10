@@ -197,3 +197,44 @@ cp -r /data/workspace/skills/skill-name /data/.openclaw/skills/
 - Doppler Dockerfile: https://docs.doppler.com/docs/dockerfile
 - Yellow Skills: https://github.com/clawzero/claw-skills/tree/main/yellow
 - OpenClaw Skills: https://github.com/openclaw/skills
+
+---
+
+## ⚠️ Important: Use Service Tokens
+
+**For CLI/production use, always use a Service Token, NOT your personal token.**
+
+### Why Service Tokens?
+
+| | Service Token | Personal Token |
+|---|-------------|---------------|
+| Access | Read-only | Full write access |
+| Scope | Single config | All configs |
+| Safety | ✅ Safe for production | ❌ Don't use |
+
+### Create Service Token
+
+**Dashboard:**
+1. Go to Doppler → yellow-claw project → dev_yellow config
+2. Click "Access" tab
+3. Click "Generate"
+4. Name: "Railway-CLI"
+5. Copy token (shown once!)
+
+**CLI:**
+```bash
+doppler configs tokens create railway-cli --project yellow-claw --config dev_yellow --plain
+```
+
+### Set in Railway
+
+```
+DOPPLER_TOKEN=dp.st.your_service_token_here
+```
+
+### ⚠️ Security Reminder
+
+**Never commit tokens!**
+- Service Tokens → Environment variables only
+- Personal Tokens → Only for local development
+- Use Doppler dashboard for secrets management
