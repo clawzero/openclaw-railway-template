@@ -1,5 +1,4 @@
 import childProcess from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,16 +7,19 @@ import express from "express";
 import httpProxy from "http-proxy";
 import * as tar from "tar";
 
+import {
+  resolvePaths,
+  configPath as resolveConfigPath,
+  isConfigured as checkConfigured,
+  resolveGatewayToken as resolveToken,
+  buildOnboardArgs,
+  makeSetupAuth,
+  clawArgs as makeClawArgs,
+} from "./lib.js";
+
 // Railway commonly sets PORT=8080 for HTTP services.
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
-const STATE_DIR =
-  process.env.OPENCLAW_STATE_DIR?.trim() ||
-  path.join(os.homedir(), ".openclaw");
-const WORKSPACE_DIR =
-  process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
-  path.join(STATE_DIR, "workspace");
-const SKILLS_DIR = path.join(STATE_DIR, "skills");
-const TOOLS_DIR = path.join(STATE_DIR, "tools");
+const { stateDir: STATE_DIR, workspaceDir: WORKSPACE_DIR, skillsDir: SKILLS_DIR, toolsDir: TOOLS_DIR } = resolvePaths();
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
@@ -95,40 +97,8 @@ initializePersistentPaths();
 
 // Gateway admin token (protects Openclaw gateway + Control UI).
 // Must be stable across restarts. If not provided via env, persist it in the state dir.
-function resolveGatewayToken() {
-  const envTok = process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
-
-  if (envTok) {
-    console.log(`[token] Using token from OPENCLAW_GATEWAY_TOKEN env variable (len: ${envTok.length})`);
-    return envTok;
-  }
-
-  const tokenPath = path.join(STATE_DIR, "gateway.token");
-  debug(`[token] Env variable not set, checking persisted file at ${tokenPath}`);
-
-  try {
-    const existing = fs.readFileSync(tokenPath, "utf8").trim();
-    if (existing) {
-      console.log(`[token] Using token from persisted file (len: ${existing.length})`);
-      return existing;
-    }
-  } catch (err) {
-    debug(`[token] Could not read persisted file: ${err.message}`);
-  }
-
-  const generated = crypto.randomBytes(32).toString("hex");
-  console.log(`[token] Generated new random token (len: ${generated.length})`);
-  try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(tokenPath, generated, { encoding: "utf8", mode: 0o600 });
-    debug(`[token] Persisted new token to ${tokenPath}`);
-  } catch (err) {
-    console.warn(`[token] Could not persist token: ${err}`);
-  }
-  return generated;
-}
-
-const OPENCLAW_GATEWAY_TOKEN = resolveGatewayToken();
+const { token: OPENCLAW_GATEWAY_TOKEN, source: tokenSource } = resolveToken({ stateDir: STATE_DIR, debugFn: debug });
+console.log(`[token] Using token from ${tokenSource} (len: ${OPENCLAW_GATEWAY_TOKEN.length})`);
 process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
 
 // Where the gateway will listen internally (we proxy to it).
@@ -145,22 +115,15 @@ const OPENCLAW_ENTRY =
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 
 function clawArgs(args) {
-  return [OPENCLAW_ENTRY, ...args];
+  return makeClawArgs(OPENCLAW_ENTRY, args);
 }
 
 function configPath() {
-  return (
-    process.env.OPENCLAW_CONFIG_PATH?.trim() ||
-    path.join(STATE_DIR, "openclaw.json")
-  );
+  return resolveConfigPath(process.env, STATE_DIR);
 }
 
 function isConfigured() {
-  try {
-    return fs.existsSync(configPath());
-  } catch {
-    return false;
-  }
+  return checkConfigured(configPath());
 }
 
 let gatewayProc = null;
@@ -333,31 +296,7 @@ async function restartGateway() {
   return ensureGatewayRunning();
 }
 
-function requireSetupAuth(req, res, next) {
-  if (!SETUP_PASSWORD) {
-    return res
-      .status(500)
-      .type("text/plain")
-      .send(
-        "SETUP_PASSWORD is not set. Set it in Railway Variables before using /setup.",
-      );
-  }
-
-  const header = req.headers.authorization || "";
-  const [scheme, encoded] = header.split(" ");
-  if (scheme !== "Basic" || !encoded) {
-    res.set("WWW-Authenticate", 'Basic realm="Openclaw Setup"');
-    return res.status(401).send("Auth required");
-  }
-  const decoded = Buffer.from(encoded, "base64").toString("utf8");
-  const idx = decoded.indexOf(":");
-  const password = idx >= 0 ? decoded.slice(idx + 1) : "";
-  if (password !== SETUP_PASSWORD) {
-    res.set("WWW-Authenticate", 'Basic realm="Openclaw Setup"');
-    return res.status(401).send("Invalid password");
-  }
-  return next();
-}
+const requireSetupAuth = makeSetupAuth(SETUP_PASSWORD);
 
 const app = express();
 app.disable("x-powered-by");
@@ -502,60 +441,12 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   });
 });
 
-function buildOnboardArgs(payload) {
-  const args = [
-    "onboard",
-    "--non-interactive",
-    "--accept-risk",
-    "--json",
-    "--no-install-daemon",
-    "--skip-health",
-    "--workspace",
-    WORKSPACE_DIR,
-    // The wrapper owns public networking; keep the gateway internal.
-    "--gateway-bind",
-    "loopback",
-    "--gateway-port",
-    String(INTERNAL_GATEWAY_PORT),
-    "--gateway-auth",
-    "token",
-    "--gateway-token",
-    OPENCLAW_GATEWAY_TOKEN,
-    "--flow",
-    payload.flow || "quickstart",
-  ];
-
-  if (payload.authChoice) {
-    args.push("--auth-choice", payload.authChoice);
-
-    // Map secret to correct flag for common choices.
-    const secret = (payload.authSecret || "").trim();
-    const map = {
-      "openai-api-key": "--openai-api-key",
-      apiKey: "--anthropic-api-key",
-      "openrouter-api-key": "--openrouter-api-key",
-      "ai-gateway-api-key": "--ai-gateway-api-key",
-      "moonshot-api-key": "--moonshot-api-key",
-      "kimi-code-api-key": "--kimi-code-api-key",
-      "gemini-api-key": "--gemini-api-key",
-      "zai-api-key": "--zai-api-key",
-      "minimax-api": "--minimax-api-key",
-      "minimax-api-lightning": "--minimax-api-key",
-      "synthetic-api-key": "--synthetic-api-key",
-      "opencode-zen": "--opencode-zen-api-key",
-    };
-    const flag = map[payload.authChoice];
-    if (flag && secret) {
-      args.push(flag, secret);
-    }
-
-    if (payload.authChoice === "token" && secret) {
-      // This is the Anthropics setup-token flow.
-      args.push("--token-provider", "anthropic", "--token", secret);
-    }
-  }
-
-  return args;
+function onboardArgs(payload) {
+  return buildOnboardArgs(payload, {
+    workspaceDir: WORKSPACE_DIR,
+    gatewayPort: INTERNAL_GATEWAY_PORT,
+    gatewayToken: OPENCLAW_GATEWAY_TOKEN,
+  });
 }
 
 function runCmd(cmd, args, opts = {}) {
@@ -597,11 +488,11 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
     const payload = req.body || {};
-    const onboardArgs = buildOnboardArgs(payload);
+    const args = onboardArgs(payload);
 
-    debug(`[onboard] Running onboard with ${onboardArgs.length} args`);
+    debug(`[onboard] Running onboard with ${args.length} args`);
 
-    const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
+    const onboard = await runCmd(OPENCLAW_NODE, clawArgs(args));
 
     let extra = "";
 
