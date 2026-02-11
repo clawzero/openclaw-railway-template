@@ -1,5 +1,8 @@
 # Openclaw Railway Template (1‑click deploy)
 
+![Test](https://github.com/clawzero/openclaw-railway-template/actions/workflows/test.yml/badge.svg)
+![Docker build](https://github.com/clawzero/openclaw-railway-template/actions/workflows/docker-build.yml/badge.svg)
+
 This repo packages **Openclaw** for Railway with a small **/setup** web wizard so users can deploy and onboard **without running any commands**.
 
 ## What you get
